@@ -13,8 +13,11 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "glm/gtx/hash.hpp"
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#pragma clang diagnostic pop
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
@@ -118,23 +121,18 @@ private:
 		app_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
 		app_info.apiVersion = VK_API_VERSION_1_0;
 
-		std::vector<const char*> desired_extensions;
-		desired_extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
-		desired_extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-
-		if (!InstanceSupportsExtensions(desired_extensions))
-		{
-			throw std::runtime_error("Unsupported instance extension or required instance extension not supported.");
-		}
+        uint32_t glfw_extension_count = 0;
+        const char** glfw_extensions = nullptr;
+        
+        glfw_extensions = glfwGetRequiredInstanceExtensions(&glfw_extension_count);
 
 		vk::InstanceCreateInfo instance_ci = {};
 		instance_ci.flags = {};
 		instance_ci.pApplicationInfo = &app_info;
 		instance_ci.enabledLayerCount = 0;
 		instance_ci.ppEnabledLayerNames = nullptr;
-		instance_ci.enabledExtensionCount = (uint32_t)desired_extensions.size();
-		instance_ci.ppEnabledExtensionNames =
-			desired_extensions.size() > 0 ? desired_extensions.data() : nullptr;
+		instance_ci.enabledExtensionCount = glfw_extension_count;
+		instance_ci.ppEnabledExtensionNames = glfw_extensions;
 
 		m_instance = vk::createInstance(instance_ci);
 	}
@@ -177,15 +175,17 @@ private:
 			throw std::runtime_error("Could not find physical devices with desired queue family properties.");
 		}
 
-		for (const auto& device : desired_devices)
-		{
-			auto features = device.getFeatures();
-			if (features.tessellationShader && features.geometryShader)
-			{
-				m_physical_device = device;
-				break;
-			}
-		}
+//        for (const auto& device : desired_devices)
+//        {
+//            auto features = device.getFeatures();
+//            if (features.tessellationShader && features.geometryShader)
+//            {
+//                m_physical_device = device;
+//                break;
+//            }
+//        }
+        
+        m_physical_device = desired_devices[0];
 
 		if (!m_physical_device)
 		{
@@ -197,94 +197,7 @@ private:
 
 	void createLogicalDevice()
 	{
-		assert(m_physical_device && m_surface);
-
-		std::vector<vk::PresentModeKHR> available_present_modes =
-			m_physical_device.getSurfacePresentModesKHR(m_surface);
-
-		if (available_present_modes.empty())
-		{
-			throw std::runtime_error("Could not find any surface present modes on physical device.");
-		}
-
-		vk::SurfaceCapabilitiesKHR surface_capabilities = m_physical_device.getSurfaceCapabilitiesKHR(m_surface);
-
-		uint32_t swapchain_image_count = surface_capabilities.minImageCount + 1;
-		if (surface_capabilities.maxImageCount > 0 &&
-			swapchain_image_count > surface_capabilities.maxImageCount)
-		{
-			swapchain_image_count = surface_capabilities.maxImageCount;
-		}
-
-		vk::ImageUsageFlags image_usage = vk::ImageUsageFlagBits::eColorAttachment;
-		vk::ImageUsageFlags desired_image_usage = vk::ImageUsageFlagBits::eColorAttachment;
-		if (AreAllFlagsSet(desired_image_usage, surface_capabilities.supportedUsageFlags))
-		{
-			image_usage = desired_image_usage;
-		}
-
-		vk::SurfaceTransformFlagBitsKHR surface_transform = surface_capabilities.currentTransform;
-		vk::SurfaceTransformFlagBitsKHR desired_surface_transform = {};
-		if (AreAllFlagsSet(
-			(vk::SurfaceTransformFlagsKHR)desired_surface_transform,
-			surface_capabilities.supportedTransforms))
-		{
-			surface_transform = desired_surface_transform;
-		}
-
-		vk::Extent2D swapchain_image_size = {};
-		if (surface_capabilities.currentExtent.width == std::numeric_limits<uint32_t>::max())
-		{
-			int width, height;
-			glfwGetFramebufferSize(m_window, &width, &height);
-
-			swapchain_image_size.width = static_cast<uint32_t>(width);
-			swapchain_image_size.height = static_cast<uint32_t>(height);
-		}
-		else
-		{
-			swapchain_image_size = surface_capabilities.currentExtent;
-		}
-
-		std::vector<vk::SurfaceFormatKHR> surface_formats = m_physical_device.getSurfaceFormatsKHR(m_surface);
-
-		vk::SurfaceFormatKHR surface_format = {};
-		vk::SurfaceFormatKHR desired_surface_format = {};
-		desired_surface_format.format = vk::Format::eR8G8B8A8Unorm;
-		desired_surface_format.colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear;
-
-		if (surface_formats.size() == 1 && surface_formats[0].format == vk::Format::eUndefined)
-		{
-			surface_format = desired_surface_format;
-		}
-		else
-		{
-			for (auto& sf : surface_formats)
-			{
-				if (desired_surface_format == sf)
-				{
-					surface_format = desired_surface_format;
-					break;
-				}
-			}
-
-			if (surface_format != desired_surface_format)
-			{
-				throw std::runtime_error("Desired surface format not supported.");
-			}
-		}
-
-		vk::PresentModeKHR present_mode = vk::PresentModeKHR::eFifo;
-		vk::PresentModeKHR desired_present_mode = vk::PresentModeKHR::eMailbox;
-
-		for (auto available_present_mode : available_present_modes)
-		{
-			if (desired_present_mode == available_present_mode)
-			{
-				present_mode = desired_present_mode;
-				break;
-			}
-		}
+		assert(m_physical_device);
 
 		vk::PhysicalDeviceFeatures device_features = {};
 		device_features.samplerAnisotropy = VK_TRUE;
@@ -370,7 +283,7 @@ private:
 		vk::Extent2D swapchain_image_size = {};
 		if (surface_capabilities.currentExtent.width == 0xFFFFFFFF)
 		{
-			swapchain_image_size = { 640, 480 };
+            swapchain_image_size = vk::Extent2D{ 640, 480 };
 
 			swapchain_image_size.width = MaxValue(swapchain_image_size.width, surface_capabilities.minImageExtent.width);
 			swapchain_image_size.width = MinValue(swapchain_image_size.width, surface_capabilities.maxImageExtent.width);
@@ -386,7 +299,11 @@ private:
 
 		vk::SurfaceFormatKHR surface_format = {};
 		vk::SurfaceFormatKHR desired_surface_format = {};
-		desired_surface_format.format = vk::Format::eR8G8B8A8Unorm;
+#ifdef __APPLE__
+        desired_surface_format.format = vk::Format::eB8G8R8A8Unorm;
+#elif _WIN32
+        desired_surface_format.format = vk::Format::eR8G8B8A8Unorm;
+#endif
 		desired_surface_format.colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear;
 
 		if (surface_formats.size() == 1 && surface_formats[0].format == vk::Format::eUndefined)
@@ -605,7 +522,7 @@ private:
 		viewport.maxDepth = 1.0f;
 
 		vk::Rect2D scissor = {};
-		scissor.offset = { 0, 0 };
+        scissor.offset = vk::Offset2D{ 0, 0 };
 		scissor.extent = m_swapchain_extent;
 
 		vk::PipelineViewportStateCreateInfo viewport_state = {};
@@ -672,8 +589,8 @@ private:
 		depth_stencil_info.minDepthBounds = 0.0f; // Optional
 		depth_stencil_info.maxDepthBounds = 1.0f; // Optional
 		depth_stencil_info.stencilTestEnable = VK_FALSE;
-		depth_stencil_info.front = {}; // Optional
-		depth_stencil_info.back = {}; // Optional
+        depth_stencil_info.front = vk::StencilOpState{}; // Optional
+        depth_stencil_info.back = vk::StencilOpState{}; // Optional
 
 		vk::GraphicsPipelineCreateInfo pipeline_info = {};
 		pipeline_info.stageCount = 2;
@@ -754,7 +671,7 @@ private:
 			vk::RenderPassBeginInfo render_pass_info = {};
 			render_pass_info.renderPass = m_render_pass;
 			render_pass_info.framebuffer = m_swapchain_frame_buffers[i];
-			render_pass_info.renderArea.offset = { 0, 0 };
+            render_pass_info.renderArea.offset = vk::Offset2D{ 0, 0 };
 			render_pass_info.renderArea.extent = m_swapchain_extent;
 
 			std::array<vk::ClearValue, 2> clear_values = {};
@@ -977,14 +894,14 @@ private:
 				0, nullptr, 0, nullptr, 1, &barrier);
 
 			vk::ImageBlit blit = {};
-			blit.srcOffsets[0] = { 0, 0, 0 };
-			blit.srcOffsets[1] = { mip_width, mip_height, 1 };
+            blit.srcOffsets[0] = vk::Offset3D{ 0, 0, 0 };
+            blit.srcOffsets[1] = vk::Offset3D{ mip_width, mip_height, 1 };
 			blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
 			blit.srcSubresource.mipLevel = i - 1;
 			blit.srcSubresource.baseArrayLayer = 0;
 			blit.srcSubresource.layerCount = 1;
-			blit.dstOffsets[0] = { 0, 0, 0 };
-			blit.dstOffsets[1] = { mip_width > 1 ? mip_width / 2 : 1, mip_height > 1 ? mip_height / 2 : 1, 1 };
+			blit.dstOffsets[0] = vk::Offset3D{ 0, 0, 0 };
+			blit.dstOffsets[1] = vk::Offset3D{ mip_width > 1 ? mip_width / 2 : 1, mip_height > 1 ? mip_height / 2 : 1, 1 };
 			blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
 			blit.dstSubresource.mipLevel = i;
 			blit.dstSubresource.baseArrayLayer = 0;
@@ -1184,8 +1101,8 @@ private:
 		region.imageSubresource.baseArrayLayer = 0;
 		region.imageSubresource.layerCount = 1;
 
-		region.imageOffset = { 0, 0, 0 };
-		region.imageExtent = { width, height, 1 };
+		region.imageOffset = vk::Offset3D{ 0, 0, 0 };
+        region.imageExtent = vk::Extent3D{ width, height, 1 };
 
 		vk::CommandBuffer command_buffer = beginSingleTimeCommands();
 

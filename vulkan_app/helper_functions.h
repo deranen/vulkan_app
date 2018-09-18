@@ -4,7 +4,10 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <vulkan/vulkan.hpp>
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
 #include <GLFW/glfw3.h>
+#pragma clang diagnostic pop
 
 struct WindowParameters
 {
