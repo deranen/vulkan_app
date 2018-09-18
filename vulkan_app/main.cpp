@@ -3,14 +3,21 @@
 #include <vector>
 #include <limits>
 #include <chrono>
+#include <unordered_map>
 
 #define GLM_FORCE_RADIANS
 #define GML_FORCE_DEPTH_ZERO_TO_ONE
 #include "glm/glm.hpp"
 #include "glm/gtc/matrix_transform.hpp"
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include "glm/gtx/hash.hpp"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
 
 #include "helper_functions.h"
 #include "file_io.h"
@@ -26,6 +33,11 @@ struct Vertex
 	glm::vec3 pos;
 	glm::vec3 color;
 	glm::vec2 texcoord;
+
+	bool operator==(const Vertex& other) const
+	{
+		return pos == other.pos && color == other.color && texcoord == other.texcoord;
+	}
 
 	static vk::VertexInputBindingDescription getBindingDescription()
 	{
@@ -58,6 +70,17 @@ struct Vertex
 		return attribute_desc;
 	}
 };
+
+
+namespace std {
+	template<> struct hash<Vertex> {
+		size_t operator()(Vertex const& vertex) const {
+			return ((hash<glm::vec3>()(vertex.pos) ^
+				(hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+				(hash<glm::vec2>()(vertex.texcoord) << 1);
+		}
+	};
+}
 
 class HelloTriangleApplication {
 public:
@@ -168,6 +191,8 @@ private:
 		{
 			throw std::runtime_error("Could not find physical devices with desired features.");
 		}
+
+		m_msaa_samples = getMaxUsableSampleCount();
 	}
 
 	void createLogicalDevice()
@@ -447,7 +472,8 @@ private:
 		for (size_t i = 0; i < m_swapchain_images.size(); ++i)
 		{
 			m_swapchain_image_views[i] =
-				createImageView(m_swapchain_images[i], m_swapchain_image_format, vk::ImageAspectFlagBits::eColor);
+				createImageView(m_swapchain_images[i], m_swapchain_image_format,
+					vk::ImageAspectFlagBits::eColor, 1);
 		}
 	}
 
@@ -457,13 +483,13 @@ private:
 
 		vk::AttachmentDescription color_attachment = {};
 		color_attachment.format = m_swapchain_image_format;
-		color_attachment.samples = vk::SampleCountFlagBits::e1;
+		color_attachment.samples = m_msaa_samples;
 		color_attachment.loadOp = vk::AttachmentLoadOp::eClear;
 		color_attachment.storeOp = vk::AttachmentStoreOp::eStore;
 		color_attachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
 		color_attachment.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
 		color_attachment.initialLayout = vk::ImageLayout::eUndefined;
-		color_attachment.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+		color_attachment.finalLayout = vk::ImageLayout::eColorAttachmentOptimal;
 
 		vk::AttachmentReference color_attachment_ref = {};
 		color_attachment_ref.attachment = 0;
@@ -471,7 +497,7 @@ private:
 
 		vk::AttachmentDescription depth_attachment = {};
 		depth_attachment.format = findDepthFormat();
-		depth_attachment.samples = vk::SampleCountFlagBits::e1;
+		depth_attachment.samples = m_msaa_samples;
 		depth_attachment.loadOp = vk::AttachmentLoadOp::eClear;
 		depth_attachment.storeOp = vk::AttachmentStoreOp::eDontCare;
 		depth_attachment.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
@@ -483,11 +509,26 @@ private:
 		depth_attachment_ref.attachment = 1;
 		depth_attachment_ref.layout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
 
+		vk::AttachmentDescription color_attachment_resolve = {};
+		color_attachment_resolve.format = m_swapchain_image_format;
+		color_attachment_resolve.samples = vk::SampleCountFlagBits::e1;
+		color_attachment_resolve.loadOp = vk::AttachmentLoadOp::eDontCare;
+		color_attachment_resolve.storeOp = vk::AttachmentStoreOp::eStore;
+		color_attachment_resolve.stencilLoadOp = vk::AttachmentLoadOp::eDontCare;
+		color_attachment_resolve.stencilStoreOp = vk::AttachmentStoreOp::eDontCare;
+		color_attachment_resolve.initialLayout = vk::ImageLayout::eUndefined;
+		color_attachment_resolve.finalLayout = vk::ImageLayout::ePresentSrcKHR;
+
+		vk::AttachmentReference color_attachment_resolve_ref = {};
+		color_attachment_resolve_ref.attachment = 2;
+		color_attachment_resolve_ref.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
 		vk::SubpassDescription subpass = {};
 		subpass.pipelineBindPoint = vk::PipelineBindPoint::eGraphics;
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &color_attachment_ref;
 		subpass.pDepthStencilAttachment = &depth_attachment_ref;
+		subpass.pResolveAttachments = &color_attachment_resolve_ref;
 
 		vk::SubpassDependency subpass_dependency = {};
 		subpass_dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -498,7 +539,8 @@ private:
 		subpass_dependency.dstAccessMask =
 			vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite;
 
-		std::array<vk::AttachmentDescription, 2> attachments = { color_attachment, depth_attachment };
+		std::array<vk::AttachmentDescription, 3> attachments =
+		{ color_attachment, depth_attachment, color_attachment_resolve };
 
 		vk::RenderPassCreateInfo render_pass_info = {};
 		render_pass_info.attachmentCount = (uint32_t)attachments.size();
@@ -586,7 +628,7 @@ private:
 
 		vk::PipelineMultisampleStateCreateInfo multisample = {};
 		multisample.sampleShadingEnable = VK_FALSE;
-		multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
+		multisample.rasterizationSamples = m_msaa_samples;
 		multisample.minSampleShading = 1.0f; // Optional
 		multisample.pSampleMask = nullptr; // Optional
 		multisample.alphaToCoverageEnable = VK_FALSE; // Optional
@@ -662,12 +704,13 @@ private:
 
 		for (size_t i = 0; i < m_swapchain_image_views.size(); ++i)
 		{
-			std::array<vk::ImageView, 2> attachments =
+			std::array<vk::ImageView, 3> attachments =
 			{
-				m_swapchain_image_views[i],
-				m_depth_image_view
+				m_color_image_view,
+				m_depth_image_view,
+				m_swapchain_image_views[i]
 			};
-
+				
 			vk::FramebufferCreateInfo framebuffer_info = {};
 			framebuffer_info.renderPass = m_render_pass;
 			framebuffer_info.attachmentCount = (uint32_t)attachments.size();
@@ -727,7 +770,7 @@ private:
 			vk::Buffer vertex_buffers[] = { m_vertex_buffer };
 			vk::DeviceSize offsets[] = { 0 };
 			m_command_buffers[i].bindVertexBuffers(0, 1, vertex_buffers, offsets);
-			m_command_buffers[i].bindIndexBuffer(m_index_buffer, 0, vk::IndexType::eUint16);
+			m_command_buffers[i].bindIndexBuffer(m_index_buffer, 0, vk::IndexType::eUint32);
 			m_command_buffers[i].bindDescriptorSets(
 				vk::PipelineBindPoint::eGraphics, m_pipeline_layout, 0, 1, &m_descriptor_sets[i], 0, nullptr);
 
@@ -775,6 +818,7 @@ private:
 		createImageViews();
 		createRenderPass();
 		createGraphicsPipeline();
+		createColorResources();
 		createDepthResources();
 		createFramebuffers();
 		createCommandBuffers();
@@ -849,12 +893,14 @@ private:
 		assert(m_device);
 
 		int tex_width, tex_height, tex_channels;
-		stbi_uc* pixels = stbi_load("textures/texture.jpg", &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+		stbi_uc* pixels = stbi_load(TexturePath.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
 
 		if (pixels == nullptr)
 		{
 			throw std::runtime_error("Could not load texture image.");
 		}
+
+		m_mip_levels = (uint32_t)std::floor(std::log2(std::max(tex_width, tex_height))) + 1;
 
 		vk::DeviceSize image_size = tex_width * tex_height * 4;
 
@@ -870,24 +916,109 @@ private:
 
 		stbi_image_free(pixels);
 
-		createImage(static_cast<uint32_t>(tex_width), static_cast<uint32_t>(tex_height),
+		createImage((uint32_t)tex_width, (uint32_t)tex_height, m_mip_levels, vk::SampleCountFlagBits::e1,
 			vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
-			vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+			vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst |
+			vk::ImageUsageFlagBits::eSampled,
 			vk::MemoryPropertyFlagBits::eDeviceLocal, m_texture_image, m_texture_image_memory);
 
 		transitionImageLayout(m_texture_image, vk::Format::eR8G8B8A8Unorm,
-			vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+			vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, m_mip_levels);
 
-		copyBufferToImage(staging_buffer, m_texture_image, static_cast<uint32_t>(tex_width), static_cast<uint32_t>(tex_height));
+		copyBufferToImage(staging_buffer, m_texture_image, (uint32_t)tex_width, (uint32_t)tex_height);
 
-		transitionImageLayout(m_texture_image, vk::Format::eR8G8B8A8Unorm,
-			vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+		// Transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps.
+
+		//transitionImageLayout(m_texture_image, vk::Format::eR8G8B8A8Unorm,
+		//	vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, m_mip_levels);
+
+		generateMipmaps(m_texture_image, vk::Format::eR8G8B8A8Unorm, tex_width, tex_height, m_mip_levels);
 
 		m_device.destroyBuffer(staging_buffer);
 		staging_buffer = nullptr;
 
 		m_device.freeMemory(staging_buffer_memory);
 		staging_buffer_memory = nullptr;
+	}
+
+	void generateMipmaps(vk::Image image, vk::Format format, uint32_t width, uint32_t height, uint32_t mip_levels)
+	{
+		vk::FormatProperties format_properies = m_physical_device.getFormatProperties(format);
+
+		if (!(format_properies.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
+		{
+			throw std::runtime_error("Texture image format does not support linear blitting.");
+		}
+
+		vk::CommandBuffer command_buffer = beginSingleTimeCommands();
+
+		vk::ImageMemoryBarrier barrier = {};
+		barrier.image = image;
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+		barrier.subresourceRange.baseArrayLayer = 0;
+		barrier.subresourceRange.layerCount = 1;
+		barrier.subresourceRange.levelCount = 1;
+
+		int32_t mip_width = width;
+		int32_t mip_height = height;
+
+		for (uint32_t i = 1; i < mip_levels; ++i)
+		{
+			barrier.subresourceRange.baseMipLevel = i - 1;
+			barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+			barrier.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+			barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+			barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
+
+			command_buffer.pipelineBarrier(
+				vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer, vk::DependencyFlags(),
+				0, nullptr, 0, nullptr, 1, &barrier);
+
+			vk::ImageBlit blit = {};
+			blit.srcOffsets[0] = { 0, 0, 0 };
+			blit.srcOffsets[1] = { mip_width, mip_height, 1 };
+			blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+			blit.srcSubresource.mipLevel = i - 1;
+			blit.srcSubresource.baseArrayLayer = 0;
+			blit.srcSubresource.layerCount = 1;
+			blit.dstOffsets[0] = { 0, 0, 0 };
+			blit.dstOffsets[1] = { mip_width > 1 ? mip_width / 2 : 1, mip_height > 1 ? mip_height / 2 : 1, 1 };
+			blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+			blit.dstSubresource.mipLevel = i;
+			blit.dstSubresource.baseArrayLayer = 0;
+			blit.dstSubresource.layerCount = 1;
+
+			command_buffer.blitImage(
+				image, vk::ImageLayout::eTransferSrcOptimal,
+				image, vk::ImageLayout::eTransferDstOptimal,
+				1, &blit, vk::Filter::eLinear);
+
+			barrier.oldLayout = vk::ImageLayout::eTransferSrcOptimal;
+			barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+			barrier.srcAccessMask = vk::AccessFlagBits::eTransferRead;
+			barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+			command_buffer.pipelineBarrier(
+				vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, vk::DependencyFlags(),
+				0, nullptr, 0, nullptr, 1, &barrier);
+
+			if (mip_width > 1) mip_width /= 2;
+			if (mip_height > 1) mip_height /= 2;
+		}
+
+		barrier.subresourceRange.baseMipLevel = mip_levels - 1;
+		barrier.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+		barrier.newLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+		barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite;
+		barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead;
+
+		command_buffer.pipelineBarrier(
+			vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eFragmentShader, vk::DependencyFlags(),
+			0, nullptr, 0, nullptr, 1, &barrier);
+
+		endSingleTimeCommands(command_buffer);
 	}
 
 	vk::CommandBuffer beginSingleTimeCommands()
@@ -923,7 +1054,8 @@ private:
 		command_buffer = nullptr;
 	}
 
-	void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling,
+	void createImage(uint32_t width, uint32_t height,
+		uint32_t mip_levels, vk::SampleCountFlagBits sample_count, vk::Format format, vk::ImageTiling tiling,
 		vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties,
 		vk::Image& image, vk::DeviceMemory& image_memory)
 	{
@@ -934,14 +1066,14 @@ private:
 		image_info.extent.width = width;
 		image_info.extent.height = height;
 		image_info.extent.depth = 1;
-		image_info.mipLevels = 1;
+		image_info.mipLevels = mip_levels;
 		image_info.arrayLayers = 1;
 		image_info.format = format;
 		image_info.tiling = tiling;
 		image_info.initialLayout = vk::ImageLayout::eUndefined;
 		image_info.usage = usage;
 		image_info.sharingMode = vk::SharingMode::eExclusive;
-		image_info.samples = vk::SampleCountFlagBits::e1;
+		image_info.samples = sample_count;
 		image_info.flags = vk::ImageCreateFlags();
 
 		image = m_device.createImage(image_info);
@@ -958,7 +1090,7 @@ private:
 	}
 
 	void transitionImageLayout(vk::Image image, vk::Format format,
-		vk::ImageLayout old_layout, vk::ImageLayout new_layout)
+		vk::ImageLayout old_layout, vk::ImageLayout new_layout, uint32_t mip_levels)
 	{
 		vk::CommandBuffer command_buffer = beginSingleTimeCommands();
 
@@ -969,7 +1101,7 @@ private:
 		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 		barrier.image = image;
 		barrier.subresourceRange.baseMipLevel = 0;
-		barrier.subresourceRange.levelCount = 1;
+		barrier.subresourceRange.levelCount = mip_levels;
 		barrier.subresourceRange.baseArrayLayer = 0;
 		barrier.subresourceRange.layerCount = 1;
 
@@ -1017,6 +1149,16 @@ private:
 
 			source_stage = vk::PipelineStageFlagBits::eTopOfPipe;
 			destination_stage = vk::PipelineStageFlagBits::eEarlyFragmentTests;
+		}
+		else if (old_layout == vk::ImageLayout::eUndefined &&
+			new_layout == vk::ImageLayout::eColorAttachmentOptimal)
+		{
+			barrier.srcAccessMask = vk::AccessFlags();
+			barrier.dstAccessMask = vk::AccessFlagBits::eColorAttachmentRead |
+				vk::AccessFlagBits::eColorAttachmentWrite;
+
+			source_stage = vk::PipelineStageFlagBits::eTopOfPipe;
+			destination_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
 		}
 		else
 		{
@@ -1211,10 +1353,11 @@ private:
 	void createTextureImageView()
 	{
 		m_texture_image_view =
-			createImageView(m_texture_image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor);
+			createImageView(m_texture_image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, m_mip_levels);
 	}
 
-	vk::ImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectFlags aspect_flags)
+	vk::ImageView createImageView(vk::Image image, vk::Format format, vk::ImageAspectFlags aspect_flags,
+		uint32_t mip_levels)
 	{
 		vk::ImageViewCreateInfo view_info = {};
 		view_info.image = image;
@@ -1222,7 +1365,7 @@ private:
 		view_info.format = format;
 		view_info.subresourceRange.aspectMask = aspect_flags;
 		view_info.subresourceRange.baseMipLevel = 0;
-		view_info.subresourceRange.levelCount = 1;
+		view_info.subresourceRange.levelCount = mip_levels;
 		view_info.subresourceRange.baseArrayLayer = 0;
 		view_info.subresourceRange.layerCount = 1;
 
@@ -1248,7 +1391,7 @@ private:
 		sampler_info.mipmapMode = vk::SamplerMipmapMode::eLinear;
 		sampler_info.mipLodBias = 0.0f;
 		sampler_info.minLod = 0.0f;
-		sampler_info.maxLod = 0.0f;
+		sampler_info.maxLod = (float)m_mip_levels;
 
 		m_texture_sampler = m_device.createSampler(sampler_info);
 	}
@@ -1257,14 +1400,15 @@ private:
 	{
 		vk::Format depth_format = findDepthFormat();
 
-		createImage(m_swapchain_extent.width, m_swapchain_extent.height, depth_format,
+		createImage(m_swapchain_extent.width, m_swapchain_extent.height, 1,
+			m_msaa_samples, depth_format,
 			vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
 			vk::MemoryPropertyFlagBits::eDeviceLocal, m_depth_image, m_depth_image_memory);
 
-		m_depth_image_view = createImageView(m_depth_image, depth_format, vk::ImageAspectFlagBits::eDepth);
+		m_depth_image_view = createImageView(m_depth_image, depth_format, vk::ImageAspectFlagBits::eDepth, 1);
 
 		transitionImageLayout(m_depth_image, depth_format,
-			vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+			vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
 	}
 
 	vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling,
@@ -1299,6 +1443,86 @@ private:
 		return (format == vk::Format::eD32SfloatS8Uint) || (format == vk::Format::eD24UnormS8Uint);
 	}
 
+	void loadModel()
+	{
+		tinyobj::attrib_t attrib;
+		std::vector<tinyobj::shape_t> shapes;
+		std::vector<tinyobj::material_t> materials;
+		std::string err;
+
+		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &err, ModelPath.c_str()))
+		{
+			throw std::runtime_error(err);
+		}
+
+		std::unordered_map<Vertex, uint32_t> unique_vertices;
+
+		for (const auto& shape : shapes)
+		{
+			for (const auto& index : shape.mesh.indices)
+			{
+				Vertex vertex = {};
+
+				vertex.pos =
+				{
+					attrib.vertices[3 * index.vertex_index + 0],
+					attrib.vertices[3 * index.vertex_index + 1],
+					attrib.vertices[3 * index.vertex_index + 2]
+				};
+
+				vertex.texcoord =
+				{
+					attrib.texcoords[2 * index.texcoord_index + 0],
+					1.0 - attrib.texcoords[2 * index.texcoord_index + 1],
+				};
+
+				vertex.color = { 1.0f, 1.0f, 1.0f };
+
+				if (unique_vertices.count(vertex) == 0)
+				{
+					unique_vertices[vertex] = (uint32_t)m_vertices.size();
+					m_vertices.push_back(vertex);
+				}
+
+				m_indices.push_back(unique_vertices[vertex]);
+			}
+		}
+	}
+
+	vk::SampleCountFlagBits getMaxUsableSampleCount()
+	{
+		vk::PhysicalDeviceProperties properties = m_physical_device.getProperties();
+
+		vk::SampleCountFlags counts =
+			(vk::SampleCountFlags)MinValue(
+				(uint32_t)properties.limits.framebufferColorSampleCounts,
+				(uint32_t)properties.limits.framebufferDepthSampleCounts);
+
+		if (counts & vk::SampleCountFlagBits::e64) { return vk::SampleCountFlagBits::e64; }
+		if (counts & vk::SampleCountFlagBits::e32) { return vk::SampleCountFlagBits::e32; }
+		if (counts & vk::SampleCountFlagBits::e16) { return vk::SampleCountFlagBits::e16; }
+		if (counts & vk::SampleCountFlagBits::e8) { return vk::SampleCountFlagBits::e8; }
+		if (counts & vk::SampleCountFlagBits::e4) { return vk::SampleCountFlagBits::e4; }
+		if (counts & vk::SampleCountFlagBits::e2) { return vk::SampleCountFlagBits::e2; }
+
+		return vk::SampleCountFlagBits::e1;
+	}
+
+	void createColorResources()
+	{
+		vk::Format color_format = m_swapchain_image_format;
+
+		createImage(m_swapchain_extent.width, m_swapchain_extent.height, 1, m_msaa_samples,
+			color_format, vk::ImageTiling::eOptimal,
+			vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
+			vk::MemoryPropertyFlagBits::eDeviceLocal, m_color_image, m_color_image_memory);
+
+		m_color_image_view = createImageView(m_color_image, color_format, vk::ImageAspectFlagBits::eColor, 1);
+
+		transitionImageLayout(m_color_image, color_format,
+			vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, 1);
+	}
+
 	void initVulkan()
 	{
 		createInstance();
@@ -1311,8 +1535,10 @@ private:
 		createDescriptorSetLayout();
 		createGraphicsPipeline();
 		createCommandPool();
+		createColorResources();
 		createDepthResources();
 		createFramebuffers();
+		loadModel();
 		createVertexBuffer();
 		createIndexBuffer();
     createTextureImage();
@@ -1421,6 +1647,15 @@ private:
 	void cleanupSwapchain()
 	{
 		assert(m_device);
+
+		m_device.destroyImageView(m_color_image_view);
+		m_color_image_view = nullptr;
+
+		m_device.destroyImage(m_color_image);
+		m_color_image = nullptr;
+
+		m_device.freeMemory(m_color_image_memory);
+		m_color_image_memory = nullptr;
 
 		m_device.destroyImageView(m_depth_image_view);
 		m_depth_image_view = nullptr;
@@ -1570,24 +1805,8 @@ private:
 
 	bool m_framebuffer_resized = false;
 
-	std::vector<Vertex> m_vertices = 
-	{
-		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-		{{ 0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-		{{ 0.5f,  0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-		{{-0.5f,  0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-
-		{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-		{{ 0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-		{{ 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-		{{-0.5f,  0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
-	};
-
-	std::vector<uint16_t> m_indices = 
-	{
-		0, 1, 2, 2, 3, 0,
-		4, 5, 6, 6, 7, 4
-	};
+	std::vector<Vertex> m_vertices;
+	std::vector<uint32_t> m_indices;
 
 	vk::Buffer       m_vertex_buffer        = nullptr;
 	vk::DeviceMemory m_vertex_buffer_memory = nullptr;
@@ -1597,6 +1816,7 @@ private:
 	std::vector<vk::Buffer>       m_uniform_buffers;
 	std::vector<vk::DeviceMemory> m_uniform_buffer_memories;
 
+	uint32_t m_mip_levels = 1;
 	vk::Image        m_texture_image = nullptr;
 	vk::DeviceMemory m_texture_image_memory = nullptr;
 
@@ -1607,9 +1827,18 @@ private:
 	vk::DeviceMemory m_depth_image_memory = nullptr;
 	vk::ImageView    m_depth_image_view   = nullptr;
 
-	const int WindowWidth = 800;
-	const int WindowHeight = 600;
+	vk::Image        m_color_image = nullptr;
+	vk::DeviceMemory m_color_image_memory = nullptr;
+	vk::ImageView    m_color_image_view = nullptr;
+
+  vk::SampleCountFlagBits m_msaa_samples = vk::SampleCountFlagBits::e1;
+
+	const int WindowWidth = 1920;
+	const int WindowHeight = 1080;
 	const int MaxFramesInFlight = 2;
+
+	const std::string ModelPath = "models/chalet.obj";
+	const std::string TexturePath = "textures/chalet.jpg";
 };
 
 int main() {
