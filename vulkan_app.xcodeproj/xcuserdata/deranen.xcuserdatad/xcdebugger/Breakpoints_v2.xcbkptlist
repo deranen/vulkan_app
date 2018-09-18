@@ -6,16 +6,16 @@
       <BreakpointProxy
          BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
          <BreakpointContent
-            shouldBeEnabled = "Yes"
+            shouldBeEnabled = "No"
             ignoreCount = "0"
             continueAfterRunningActions = "No"
             filePath = "vulkan_app/main.cpp"
-            timestampString = "558981399.1088769"
+            timestampString = "558996310.010921"
             startingColumnNumber = "9223372036854775807"
             endingColumnNumber = "9223372036854775807"
-            startingLineNumber = "1504"
-            endingLineNumber = "1504"
-            landmarkName = "drawFrame()"
+            startingLineNumber = "109"
+            endingLineNumber = "109"
+            landmarkName = "framebufferResizeCallback(GLFWwindow* window, int width, int height)"
             landmarkType = "7">
          </BreakpointContent>
       </BreakpointProxy>

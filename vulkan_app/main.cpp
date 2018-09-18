@@ -100,7 +100,15 @@ private:
 		glfwInit();
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-		m_window = glfwCreateWindow(WindowWidth, WindowHeight, "Vulkan", nullptr, nullptr);
+#ifdef __APPLE__
+		double scale_factor = 0.5;
+#else
+		double scale_factor = 1.0;
+#endif
+		
+		m_window = glfwCreateWindow((int)(scale_factor*WindowWidth),
+									(int)(scale_factor*WindowHeight),
+									"Vulkan", nullptr, nullptr);
 
 		glfwSetWindowUserPointer(m_window, this);
 		glfwSetFramebufferSizeCallback(m_window, framebufferResizeCallback);
@@ -121,10 +129,10 @@ private:
 		app_info.engineVersion = VK_MAKE_VERSION(1, 0, 0);
 		app_info.apiVersion = VK_API_VERSION_1_0;
 
-        uint32_t glfw_extension_count = 0;
-        const char** glfw_extensions = nullptr;
-        
-        glfw_extensions = glfwGetRequiredInstanceExtensions(&glfw_extension_count);
+		uint32_t glfw_extension_count = 0;
+		const char** glfw_extensions = nullptr;
+
+		glfw_extensions = glfwGetRequiredInstanceExtensions(&glfw_extension_count);
 
 		vk::InstanceCreateInfo instance_ci = {};
 		instance_ci.flags = {};
@@ -175,17 +183,17 @@ private:
 			throw std::runtime_error("Could not find physical devices with desired queue family properties.");
 		}
 
-//        for (const auto& device : desired_devices)
-//        {
-//            auto features = device.getFeatures();
-//            if (features.tessellationShader && features.geometryShader)
-//            {
-//                m_physical_device = device;
-//                break;
-//            }
-//        }
-        
-        m_physical_device = desired_devices[0];
+//		for (const auto& device : desired_devices)
+//		{
+//			auto features = device.getFeatures();
+//			if (features.tessellationShader && features.geometryShader)
+//			{
+//				m_physical_device = device;
+//				break;
+//			}
+//		}
+		
+		m_physical_device = desired_devices[0];
 
 		if (!m_physical_device)
 		{
@@ -283,7 +291,7 @@ private:
 		vk::Extent2D swapchain_image_size = {};
 		if (surface_capabilities.currentExtent.width == 0xFFFFFFFF)
 		{
-            swapchain_image_size = vk::Extent2D{ 640, 480 };
+			swapchain_image_size = vk::Extent2D{ 640, 480 };
 
 			swapchain_image_size.width = MaxValue(swapchain_image_size.width, surface_capabilities.minImageExtent.width);
 			swapchain_image_size.width = MinValue(swapchain_image_size.width, surface_capabilities.maxImageExtent.width);
@@ -300,9 +308,9 @@ private:
 		vk::SurfaceFormatKHR surface_format = {};
 		vk::SurfaceFormatKHR desired_surface_format = {};
 #ifdef __APPLE__
-        desired_surface_format.format = vk::Format::eB8G8R8A8Unorm;
+		desired_surface_format.format = vk::Format::eB8G8R8A8Unorm;
 #elif _WIN32
-        desired_surface_format.format = vk::Format::eR8G8B8A8Unorm;
+		desired_surface_format.format = vk::Format::eR8G8B8A8Unorm;
 #endif
 		desired_surface_format.colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear;
 
@@ -522,7 +530,7 @@ private:
 		viewport.maxDepth = 1.0f;
 
 		vk::Rect2D scissor = {};
-        scissor.offset = vk::Offset2D{ 0, 0 };
+		scissor.offset = vk::Offset2D{ 0, 0 };
 		scissor.extent = m_swapchain_extent;
 
 		vk::PipelineViewportStateCreateInfo viewport_state = {};
@@ -589,8 +597,8 @@ private:
 		depth_stencil_info.minDepthBounds = 0.0f; // Optional
 		depth_stencil_info.maxDepthBounds = 1.0f; // Optional
 		depth_stencil_info.stencilTestEnable = VK_FALSE;
-        depth_stencil_info.front = vk::StencilOpState{}; // Optional
-        depth_stencil_info.back = vk::StencilOpState{}; // Optional
+		depth_stencil_info.front = vk::StencilOpState{}; // Optional
+		depth_stencil_info.back = vk::StencilOpState{}; // Optional
 
 		vk::GraphicsPipelineCreateInfo pipeline_info = {};
 		pipeline_info.stageCount = 2;
@@ -671,7 +679,7 @@ private:
 			vk::RenderPassBeginInfo render_pass_info = {};
 			render_pass_info.renderPass = m_render_pass;
 			render_pass_info.framebuffer = m_swapchain_frame_buffers[i];
-            render_pass_info.renderArea.offset = vk::Offset2D{ 0, 0 };
+			render_pass_info.renderArea.offset = vk::Offset2D{ 0, 0 };
 			render_pass_info.renderArea.extent = m_swapchain_extent;
 
 			std::array<vk::ClearValue, 2> clear_values = {};
@@ -844,11 +852,6 @@ private:
 
 		copyBufferToImage(staging_buffer, m_texture_image, (uint32_t)tex_width, (uint32_t)tex_height);
 
-		// Transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps.
-
-		//transitionImageLayout(m_texture_image, vk::Format::eR8G8B8A8Unorm,
-		//	vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, m_mip_levels);
-
 		generateMipmaps(m_texture_image, vk::Format::eR8G8B8A8Unorm, tex_width, tex_height, m_mip_levels);
 
 		m_device.destroyBuffer(staging_buffer);
@@ -894,8 +897,8 @@ private:
 				0, nullptr, 0, nullptr, 1, &barrier);
 
 			vk::ImageBlit blit = {};
-            blit.srcOffsets[0] = vk::Offset3D{ 0, 0, 0 };
-            blit.srcOffsets[1] = vk::Offset3D{ mip_width, mip_height, 1 };
+			blit.srcOffsets[0] = vk::Offset3D{ 0, 0, 0 };
+			blit.srcOffsets[1] = vk::Offset3D{ mip_width, mip_height, 1 };
 			blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
 			blit.srcSubresource.mipLevel = i - 1;
 			blit.srcSubresource.baseArrayLayer = 0;
@@ -1102,7 +1105,7 @@ private:
 		region.imageSubresource.layerCount = 1;
 
 		region.imageOffset = vk::Offset3D{ 0, 0, 0 };
-        region.imageExtent = vk::Extent3D{ width, height, 1 };
+		region.imageExtent = vk::Extent3D{ width, height, 1 };
 
 		vk::CommandBuffer command_buffer = beginSingleTimeCommands();
 
@@ -1458,7 +1461,7 @@ private:
 		loadModel();
 		createVertexBuffer();
 		createIndexBuffer();
-    createTextureImage();
+		createTextureImage();
 		createTextureImageView();
 		createTextureSampler();
 		createUniformBuffers();
@@ -1493,19 +1496,15 @@ private:
 	{
 		m_device.waitForFences(1, &m_in_flight_fences[m_current_frame], VK_TRUE, std::numeric_limits<uint64_t>::max());
 
-		vk::ResultValue<uint32_t> result_value =
-			m_device.acquireNextImageKHR(
-				m_swapchain, std::numeric_limits<uint64_t>::max(),
-				m_image_available_semaphores[m_current_frame], nullptr);
+		uint32_t image_index = 0;
+		
+		vk::Result result = m_device.acquireNextImageKHR(m_swapchain, std::numeric_limits<uint64_t>::max(), m_image_available_semaphores[m_current_frame], nullptr, &image_index);
 
-		vk::Result result = result_value.result;
 		if (result == vk::Result::eErrorOutOfDateKHR)
 		{
 			recreateSwapchain();
 			return;
 		}
-
-		uint32_t image_index = result_value.value;
 
 		updateUniformBuffer(image_index);
 
@@ -1703,7 +1702,7 @@ private:
 	vk::Format   m_swapchain_image_format = {};
 	vk::Extent2D m_swapchain_extent       = {};
 
-  vk::RenderPass          m_render_pass           = nullptr;
+	vk::RenderPass          m_render_pass           = nullptr;
 	vk::DescriptorSetLayout m_descriptor_set_layout = nullptr;
 	vk::PipelineLayout      m_pipeline_layout       = nullptr;
 	vk::Pipeline            m_pipeline              = nullptr;
@@ -1748,7 +1747,7 @@ private:
 	vk::DeviceMemory m_color_image_memory = nullptr;
 	vk::ImageView    m_color_image_view = nullptr;
 
-  vk::SampleCountFlagBits m_msaa_samples = vk::SampleCountFlagBits::e1;
+	vk::SampleCountFlagBits m_msaa_samples = vk::SampleCountFlagBits::e1;
 
 	const int WindowWidth = 1920;
 	const int WindowHeight = 1080;
