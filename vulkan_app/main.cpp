@@ -13,11 +13,15 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "glm/gtx/hash.hpp"
 
+#ifdef __APPLE__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
+#endif
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#ifdef __APPLE__
 #pragma clang diagnostic pop
+#endif
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
